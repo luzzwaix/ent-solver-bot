@@ -14,14 +14,17 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 
-# Вставьте токен от @BotFather или задайте переменную окружения TELEGRAM_TOKEN.
-TELEGRAM_TOKEN = "8398494272:AAGpn4JX7XQ1ehGsPGqiaNRaimUwa0NGxGs"
-GEMINI_API_KEY = "AIzaSyDBQZ32tYfD-y5uz1FKsU6Btms4HutOTA0"
+# Set these in Render Environment or in your local terminal.
+# Do not hardcode real API keys in this file.
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
-# По требованию проекта оставлен gemini-1.5-pro.
-# Если Google AI Studio вернет 404/модель недоступна, задайте GEMINI_MODEL=gemini-2.5-flash.
+# The hackathon requirement says gemini-1.5-pro. If it is unavailable,
+# set GEMINI_MODEL=gemini-2.5-flash in Render Environment.
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-pro")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o")
+
 UPLOAD_SECRET = os.getenv("UPLOAD_SECRET", "")
 UPLOAD_SERVER_ENABLED = os.getenv("UPLOAD_SERVER_ENABLED", "1") == "1"
 UPLOAD_HOST = os.getenv("UPLOAD_HOST", "0.0.0.0")
@@ -79,7 +82,7 @@ async def solve_with_gemini(image_bytes: bytes, mime_type: str) -> str:
 
     client = genai.Client(api_key=GEMINI_API_KEY)
 
-    def _call_gemini() -> str:
+    def call_gemini() -> str:
         response = client.models.generate_content(
             model=GEMINI_MODEL,
             contents=[
@@ -93,7 +96,7 @@ async def solve_with_gemini(image_bytes: bytes, mime_type: str) -> str:
         )
         return response.text or ""
 
-    result = await asyncio.to_thread(_call_gemini)
+    result = await asyncio.to_thread(call_gemini)
     return normalize_answer(result)
 
 
@@ -126,7 +129,7 @@ async def solve_with_openai(image_bytes: bytes, mime_type: str) -> str:
         "Content-Type": "application/json",
     }
 
-    def _call_openai() -> str:
+    def call_openai() -> str:
         response = requests.post(
             "https://api.openai.com/v1/chat/completions",
             json=payload,
@@ -137,7 +140,7 @@ async def solve_with_openai(image_bytes: bytes, mime_type: str) -> str:
         data = response.json()
         return data["choices"][0]["message"]["content"]
 
-    result = await asyncio.to_thread(_call_openai)
+    result = await asyncio.to_thread(call_openai)
     return normalize_answer(result)
 
 
@@ -147,12 +150,19 @@ async def solve_image(image_bytes: bytes, mime_type: str) -> str:
     except Exception:
         logger.exception("Gemini failed")
 
+    if not OPENAI_API_KEY:
+        logger.warning("OpenAI fallback skipped: OPENAI_API_KEY is empty")
+        return (
+            "ОТВЕТ: ? | РЕШЕНИЕ: Gemini недоступен, а OPENAI_API_KEY не задан. "
+            "Добавьте ключ OpenAI или проверьте Gemini."
+        )
+
     try:
         return await solve_with_openai(image_bytes, mime_type)
     except Exception:
         logger.exception("OpenAI fallback failed")
         return (
-            "ОТВЕТ: ? | РЕШЕНИЕ: ИИ-сервис временно недоступен. "
+            "ОТВЕТ: ? | РЕШЕНИЕ: Gemini и GPT-4o временно недоступны. "
             "Проверьте API ключи, модель и повторите запрос."
         )
 
@@ -269,7 +279,7 @@ async def handle_non_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 def main() -> None:
     if not TELEGRAM_TOKEN:
         raise RuntimeError(
-            "TELEGRAM_TOKEN is empty. Add it in bot.py or set TELEGRAM_TOKEN environment variable."
+            "TELEGRAM_TOKEN is empty. Set it in Render Environment or local environment variables."
         )
 
     if UPLOAD_SERVER_ENABLED:
