@@ -43,6 +43,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ent-bot")
 upload_app = Flask(__name__)
+recent_uploads = []
 
 
 PROMPT = """
@@ -60,6 +61,19 @@ PROMPT = """
 @upload_app.get("/")
 def health_check():
     return jsonify({"ok": True, "service": "ent-solver-bot"})
+
+
+def remember_upload(event: dict) -> None:
+    recent_uploads.append(event)
+    del recent_uploads[:-20]
+
+
+@upload_app.get("/debug/uploads")
+def debug_uploads():
+    secret = request.args.get("secret", "").strip()
+    if UPLOAD_SECRET and secret != UPLOAD_SECRET:
+        return jsonify({"ok": False, "error": "bad secret"}), 403
+    return jsonify({"ok": True, "recent_uploads": recent_uploads})
 
 
 def normalize_answer(text: str) -> str:
@@ -185,18 +199,34 @@ def send_telegram_message(chat_id: str, text: str) -> None:
 def upload_screenshot():
     chat_id = request.args.get("chat_id", "").strip()
     secret = request.args.get("secret", "").strip()
+    event = {
+        "path": request.path,
+        "chat_id_present": bool(chat_id),
+        "secret_present": bool(secret),
+        "content_type": request.headers.get("Content-Type"),
+        "content_length": request.headers.get("Content-Length"),
+    }
 
     if UPLOAD_SECRET and secret != UPLOAD_SECRET:
+        event["status"] = "bad_secret"
+        remember_upload(event)
         return jsonify({"ok": False, "error": "bad secret"}), 403
 
     if not chat_id:
+        event["status"] = "missing_chat_id"
+        remember_upload(event)
         return jsonify({"ok": False, "error": "chat_id is required"}), 400
 
     image_bytes = request.get_data()
+    event["bytes_received"] = len(image_bytes)
     if not image_bytes:
+        event["status"] = "empty_body"
+        remember_upload(event)
         return jsonify({"ok": False, "error": "empty file body"}), 400
 
     if len(image_bytes) > MAX_PHOTO_SIZE_MB * 1024 * 1024:
+        event["status"] = "too_large"
+        remember_upload(event)
         return jsonify({"ok": False, "error": "file is too large"}), 413
 
     mime_type = request.headers.get("Content-Type") or "image/jpeg"
@@ -208,9 +238,14 @@ def upload_screenshot():
     try:
         answer = asyncio.run(solve_image(image_bytes, mime_type))
         send_telegram_message(chat_id, answer)
+        event["status"] = "sent"
+        event["answer_preview"] = answer[:120]
+        remember_upload(event)
         return jsonify({"ok": True, "answer": answer})
     except Exception:
         logger.exception("Upload endpoint failed")
+        event["status"] = "processing_failed"
+        remember_upload(event)
         try:
             send_telegram_message(
                 chat_id,
