@@ -29,6 +29,7 @@ UPLOAD_SECRET = os.getenv("UPLOAD_SECRET", "")
 UPLOAD_SERVER_ENABLED = os.getenv("UPLOAD_SERVER_ENABLED", "1") == "1"
 UPLOAD_HOST = os.getenv("UPLOAD_HOST", "0.0.0.0")
 UPLOAD_PORT = int(os.getenv("PORT", os.getenv("UPLOAD_PORT", "8080")))
+TELEGRAM_POLLING_ENABLED = os.getenv("TELEGRAM_POLLING_ENABLED", "1") == "1"
 
 MAX_PHOTO_SIZE_MB = 12
 
@@ -281,6 +282,10 @@ def main() -> None:
         raise RuntimeError(
             "TELEGRAM_TOKEN is empty. Set it in Render Environment or local environment variables."
         )
+
+    if UPLOAD_SERVER_ENABLED and not TELEGRAM_POLLING_ENABLED:
+        run_upload_server()
+        return
 
     if UPLOAD_SERVER_ENABLED:
         threading.Thread(target=run_upload_server, daemon=True).start()

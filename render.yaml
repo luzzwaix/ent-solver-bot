@@ -16,5 +16,7 @@ services:
         generateValue: true
       - key: UPLOAD_SERVER_ENABLED
         value: "1"
+      - key: TELEGRAM_POLLING_ENABLED
+        value: "0"
       - key: GEMINI_MODEL
         value: gemini-1.5-pro
