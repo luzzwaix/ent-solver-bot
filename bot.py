@@ -195,6 +195,24 @@ def send_telegram_message(chat_id: str, text: str) -> None:
     response.raise_for_status()
 
 
+def process_uploaded_image(chat_id: str, image_bytes: bytes, mime_type: str, event: dict) -> None:
+    try:
+        answer = asyncio.run(solve_image(image_bytes, mime_type))
+        send_telegram_message(chat_id, answer)
+        event["status"] = "sent"
+        event["answer_preview"] = answer[:120]
+    except Exception:
+        logger.exception("Upload background processing failed")
+        event["status"] = "processing_failed"
+        try:
+            send_telegram_message(
+                chat_id,
+                "ОТВЕТ: ? | РЕШЕНИЕ: Ошибка обработки upload-запроса. Проверьте сервер и ключи.",
+            )
+        except Exception:
+            logger.exception("Could not notify user after upload failure")
+
+
 @upload_app.post("/upload")
 def upload_screenshot():
     chat_id = request.args.get("chat_id", "").strip()
@@ -235,25 +253,14 @@ def upload_screenshot():
     else:
         mime_type = "image/jpeg"
 
-    try:
-        answer = asyncio.run(solve_image(image_bytes, mime_type))
-        send_telegram_message(chat_id, answer)
-        event["status"] = "sent"
-        event["answer_preview"] = answer[:120]
-        remember_upload(event)
-        return jsonify({"ok": True, "answer": answer})
-    except Exception:
-        logger.exception("Upload endpoint failed")
-        event["status"] = "processing_failed"
-        remember_upload(event)
-        try:
-            send_telegram_message(
-                chat_id,
-                "ОТВЕТ: ? | РЕШЕНИЕ: Ошибка обработки upload-запроса. Проверьте сервер и ключи.",
-            )
-        except Exception:
-            logger.exception("Could not notify user after upload failure")
-        return jsonify({"ok": False, "error": "processing failed"}), 500
+    event["status"] = "accepted"
+    remember_upload(event)
+    threading.Thread(
+        target=process_uploaded_image,
+        args=(chat_id, image_bytes, mime_type, event),
+        daemon=True,
+    ).start()
+    return jsonify({"ok": True, "status": "accepted"})
 
 
 def run_upload_server() -> None:
